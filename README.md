@@ -1,236 +1,196 @@
-# API Interceptor (Refactored Architecture)
+# API Interceptor
 
-Production-grade HTTP/HTTPS interception framework featuring:
-- **Mitmproxy addon pipeline** for transparent request/response interception
-- **FastAPI backend** with RESTful API + WebSocket real-time updates
-- **Sequential interception queue** with decision enforcement
-- **SQLite persistence** for flow history and user decisions
-- **Modern responsive UI** with modular JavaScript architecture
+Production-oriented HTTP/HTTPS interception stack with:
+- mitmproxy addon pipeline
+- FastAPI backend (REST + WebSocket)
+- sequential interception queue (head-only request decision)
+- SQLite-backed flow persistence
+- modular frontend JavaScript
 
-## Quick Start
+## Architecture
 
-### Installation
-```bash
-pip install -r requirements.txt
+- `app/proxy/interceptor.py`: mitmproxy addon entrypoint
+- `app/proxy/pipeline.py`: request/response interception pipeline
+- `app/state/store.py`: queue/state lifecycle service
+- `app/state/repository.py`: SQLite persistence
+- `app/transport/ws_manager.py`: resilient WebSocket fanout
+- `app/api/server.py`: FastAPI app composition
+- `gui/index.html` + `gui/static/app.js`: UI
+
+## Requirements
+
+- Python 3.11+
+- Windows PowerShell (for `smoke_test.ps1`)
+- Dependencies from `requirements.txt` (includes `mitmproxy`, `fastapi`, `uvicorn`)
+
+## Setup
+
+Recommended:
+```bat
+setup.bat
 ```
 
-### Running
+Manual:
 ```bash
-# Run both proxy and GUI
+python -m pip install -r requirements.txt
+```
+
+## Run Modes
+
+The app has 3 modes:
+
+- `python main.py gui` -> API + UI only
+- `python main.py proxy` -> proxy only
+- `python main.py all` -> API + UI + proxy
+
+If you run `python main.py` without args, it starts `gui` mode only.
+
+## Check Active Host/Ports
+
+Your effective values come from `.env` (if present) plus defaults:
+```bash
+python -c "from app.core.config import get_settings as g; s=g(); print('UI=',s.ui_host,s.ui_port,'PROXY=',s.proxy_host,s.proxy_port)"
+```
+
+## Demo On Your Laptop (Firefox)
+
+1. Start both services:
+```bash
 python main.py all
-
-# Run components separately
-python main.py gui      # GUI only
-python main.py proxy    # Proxy only
 ```
 
-## Configuration
+2. In Firefox -> `Settings` -> `Network Settings` -> `Manual proxy configuration`:
+- HTTP Proxy = `PROXY_HOST`
+- Port = `PROXY_PORT`
+- Enable proxy for HTTPS too
 
-Create a `.env` file in the project root (optional):
-```env
-# Server Configuration
-UI_HOST=127.0.0.1
-UI_PORT=8082
+3. Open UI at `http://UI_HOST:UI_PORT`.
 
-# Proxy Configuration
-PROXY_HOST=127.0.0.1
-PROXY_PORT=8081
+4. In proxied Firefox, open `http://mitm.it` and install the mitmproxy certificate to capture HTTPS.
 
-# Database
-SQLITE_PATH=data/interceptor.db
+5. Browse to:
+- `http://example.com`
+- `https://httpbin.org/get`
 
-# Logging
-LOG_LEVEL=INFO
+6. Confirm requests appear in UI flow history.
+
+## Testing
+
+Run all tests (unit + smoke):
+```bat
+run_tests.bat
 ```
 
-## Default Endpoints
-
-| Service | Endpoint | Description |
-|---------|----------|-------------|
-| **GUI** | `http://127.0.0.1:8082` | Web interface |
-| **Proxy** | `127.0.0.1:8081` | MITM proxy server |
-| **Health** | `GET /health` | Service health check |
-| **WebSocket** | `GET /ws` | Real-time flow updates |
-
-## Project Structure
-```text
-api-interceptor/
-├── app/
-│   ├── api/
-│   │   ├── server.py           # FastAPI application
-│   │   └── routes/             # API route handlers
-│   ├── core/
-│   │   ├── config.py           # Configuration management
-│   │   └── logging.py          # Logging setup
-│   ├── domain/
-│   │   ├── models.py           # Data models
-│   │   └── protocols.py        # Type protocols
-│   ├── proxy/
-│   │   ├── interceptor.py      # Mitmproxy addon
-│   │   ├── pipeline.py         # Request pipeline
-│   │   ├── client.py           # Proxy client
-│   │   └── utils.py            # Utility functions
-│   ├── state/
-│   │   ├── repository.py       # Database operations
-│   │   └── store.py            # In-memory state
-│   └── transport/
-│       └── ws_manager.py       # WebSocket manager
-├── gui/
-│   ├── static/
-│   │   ├── app.js              # Frontend JavaScript
-│   │   ├── style.css           # Styling
-│   │   └── index.html          # Main page
-│   └── templates/              # HTML templates
-├── data/
-│   └── interceptor.db          # SQLite database
-├── main.py                      # Application entry point
-├── requirements.txt
-└── .env                        # Environment configuration
+Run only smoke test:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\smoke_test.ps1
 ```
 
-## API Reference
+Use smoke test against already-running services:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\smoke_test.ps1 -UseExistingServer
+```
 
-### Response Envelope
+## API Contract
 
-All REST API responses follow this structure:
+All REST responses use:
 ```json
-{
-  "ok": true,
-  "data": { ... },
-  "error": null
-}
+{"ok": true, "data": {...}, "error": null}
 ```
 
-### Core Endpoints
+Main endpoints:
+- `GET /health`
+- `GET /api/config`
+- `PUT /api/config`
+- `POST /api/config/target_ips`
+- `GET /api/config/info`
+- `GET /api/flows`
+- `GET /api/flows/queue`
+- `GET /api/flows/{flow_id}`
+- `POST /api/flows`
+- `PUT /api/flows/{flow_id}/response`
+- `POST /api/flows/{flow_id}/request/decision`
+- `GET /api/flows/{flow_id}/request/decision`
+- `POST /api/flows/{flow_id}/response/decision`
+- `GET /api/flows/{flow_id}/response/decision`
+- `POST /api/flows/{flow_id}/complete`
+- `POST /api/flows/{flow_id}/drop`
+- `POST /api/flows/clear`
+- `POST /api/launch_browser`
+- `GET /ws`
 
-#### Configuration
-```http
-GET  /api/config              # Get current configuration
-PUT  /api/config              # Update configuration
-```
+## WebSocket Events
 
-#### Flows
-```http
-GET    /api/flows             # List all flows
-GET    /api/flows/{flow_id}   # Get specific flow
-POST   /api/flows             # Create new flow
-PUT    /api/flows/{flow_id}/response  # Update flow response
-GET    /api/flows/queue       # Get pending flows queue
-POST   /api/flows/clear       # Clear flow history
-```
+- `init`
+- `config.updated`
+- `flow.created`
+- `flow.updated`
+- `flow.completed`
+- `flow.dropped`
+- `queue.updated`
+- `flows.cleared`
+- `ping`
+- `error`
 
-#### Request Decisions
-```http
-POST   /api/flows/{flow_id}/request/decision   # Make request decision
-GET    /api/flows/{flow_id}/request/decision   # Get request decision
-```
+## Configuration Notes
 
-#### Response Decisions
-```http
-POST   /api/flows/{flow_id}/response/decision  # Make response decision
-GET    /api/flows/{flow_id}/response/decision  # Get response decision
-```
+Common `.env` keys:
+- `UI_HOST`, `UI_PORT`
+- `PROXY_HOST`, `PROXY_PORT`
+- `INTERCEPT_ENABLED_DEFAULT`, `INTERCEPT_ALL_DEFAULT`
+- `TARGET_IPS`, `IGNORED_HOSTS`
+- `MAX_FLOWS_MEMORY`, `FLOW_RETENTION_MINUTES`
+- `SQLITE_PATH`
+- `LOG_LEVEL`, `LOG_TRAFFIC`
 
-### WebSocket Events
-
-Connect to `/ws` for real-time updates:
-```javascript
-const ws = new WebSocket('ws://127.0.0.1:8082/ws');
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  // Handle: flow_created, flow_updated, decision_made, etc.
-};
-```
-
-## Features
-
-### Sequential Interception
-- Queue-based request processing ensures ordered handling
-- Queue-head enforcement for robust decision workflow
-- Prevents race conditions in concurrent environments
-
-### Persistent Storage
-- SQLite database for flow history
-- Searchable and filterable flow logs
-- Decision history tracking
-
-### Real-time Updates
-- WebSocket push notifications
-- Live flow status updates
-- Instant UI synchronization
-
-### Flexible Decisions
-- Allow/Block requests at interception point
-- Modify request/response on-the-fly
-- Custom response injection
-
-## Browser Configuration
-
-Configure your browser to use the proxy:
-
-**Manual Configuration:**
-- Proxy: `127.0.0.1`
-- Port: `8081`
-- Protocol: HTTP/HTTPS
-
-**System Proxy (macOS):**
-```bash
-networksetup -setwebproxy Wi-Fi 127.0.0.1 8081
-networksetup -setsecurewebproxy Wi-Fi 127.0.0.1 8081
-```
-
-**Certificate Installation:**
-1. Visit `http://mitm.it` through the proxy
-2. Download and install the certificate for your platform
-3. Trust the certificate in your system
-
-## Development
-
-### Adding New Routes
-
-Create a new file in `app/api/routes/`:
-```python
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/api/custom", tags=["custom"])
-
-@router.get("/endpoint")
-async def custom_endpoint():
-    return {"ok": True, "data": {"message": "Hello"}}
-```
-
-Register in `app/api/server.py`:
-```python
-from app.api.routes import custom
-app.include_router(custom.router)
-```
-
-### Database Schema
-
-Located in `app/state/repository.py`. Key tables:
-- `flows` - HTTP request/response pairs
-- `decisions` - User interception decisions
-- `config` - Application configuration
+Default ignored host includes `detectportal.firefox.com` to reduce browser noise.
 
 ## Troubleshooting
 
-**Proxy not starting:**
-- Check if port 8081 is available
-- Review logs for binding errors
+### "Proxy server is refusing connections"
 
-**Certificate errors:**
-- Reinstall mitmproxy certificate from `http://mitm.it`
-- Ensure certificate is trusted in system keychain
+Check that proxy mode is actually running and the browser is using the same host/port:
+```bash
+python main.py proxy
+```
 
-**WebSocket disconnects:**
-- Check firewall settings
-- Verify `UI_HOST` and `UI_PORT` configuration
+Then verify listener:
+```powershell
+netstat -ano | findstr :8081
+```
+
+(Replace `8081` with your configured `PROXY_PORT`.)
+
+### `[WinError 10048] ... address already in use`
+
+Another process is using the proxy port. Either stop that process or change `PROXY_PORT` in `.env`.
+
+### `can't open file ... main,py`
+
+Run with a dot:
+```bash
+python main.py
+```
+
+not `main,py`.
+
+### Flows not showing (except smoke test)
+
+- Ensure browser proxy is set for both HTTP and HTTPS.
+- Ensure you are browsing with the proxied browser profile.
+- Check current intercept scope in UI (`intercept_all`, `target_ips`).
+- Confirm host is not in `IGNORED_HOSTS`.
+
+### HTTPS requests not captured
+
+Install and trust mitmproxy cert from `http://mitm.it` in the proxied browser.
+See also: `docs/HTTPS_SETUP.md`.
+
+## Additional Docs
+
+- `docs/PROJECT_OVERVIEW.md`
+- `docs/HTTPS_SETUP.md`
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+MIT License
